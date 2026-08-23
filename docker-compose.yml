@@ -1,0 +1,7 @@
+services:
+  lotto:
+    build: .
+    image: lotto-ciclometria:latest
+    volumes:
+      - ./data:/app/data
+    command: ["--help"]
