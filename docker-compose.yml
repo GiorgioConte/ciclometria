@@ -4,4 +4,32 @@ services:
     image: lotto-ciclometria:latest
     volumes:
       - ./data:/app/data
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?impostare DATABASE_URL}
+    networks:
+      - app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: ["--help"]
+  api:
+    build: .
+    image: lotto-ciclometria:latest
+    volumes:
+      - ./data:/app/data
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?impostare DATABASE_URL}
+      DATA_DIR: /app/data
+      API_TOKEN: ${LOTTO_API_TOKEN:-}
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks:
+      - app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    entrypoint: ["uvicorn"]
+    command: ["lotto_ciclometria.api:app", "--host", "0.0.0.0", "--port", "8000"]
+
+networks:
+  app:
+    external: true
+    name: ${DOCKER_NETWORK:-ciclometria_default}

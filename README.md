@@ -44,6 +44,24 @@ docker compose run --rm lotto distanza30 BARI
 La directory `./data` è montata come volume: cache HTML e archivio CSV
 restano sul computer ospite.
 
+## Deploy con PostgreSQL esistente
+
+Il `docker-compose.yml` avvia solo i servizi `lotto` e `api`: PostgreSQL deve
+essere già in esecuzione e raggiungibile sulla rete Docker indicata da
+`DOCKER_NETWORK`. Copiare `.env.example` in `.env`, impostare `DATABASE_URL` e
+`LOTTO_API_TOKEN`, quindi avviare:
+
+```bash
+docker network create ciclometria_default 2>/dev/null || true
+docker compose up -d --build api
+docker compose run --rm lotto download
+```
+
+Il container PostgreSQL esistente deve essere collegato a quella rete, ad
+esempio con `docker network connect ciclometria_default NOME_POSTGRES`.
+L'endpoint `POST /daily-report` restituisce il JSON per n8n. Il workflow di
+esempio è in `n8n/workflow-report-giornaliero.json`.
+
 ## Il metodo della distanza 30
 
 Individuato un ambo a distanza 30 nella figura di un'estrazione, la prima

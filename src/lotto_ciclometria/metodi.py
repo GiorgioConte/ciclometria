@@ -104,14 +104,50 @@ def verifica_retroattiva(
         (e for e in estrazioni if e.ruota == ruota),
         key=lambda e: e.chiave_ordinamento,
     )
+    return _verifica_serie(serie, colpi=colpi)
+
+
+def verifica_periodo(
+    estrazioni: Sequence[Estrazione],
+    *,
+    ruota: Ruota,
+    colpi: int,
+    dal: date | None = None,
+    al: date | None = None,
+) -> ReportVerifica:
+    """Verifica limitata ai trigger del periodo [dal, al], estremi inclusi.
+
+    Gli esiti vengono cercati nei colpi successivi al trigger anche oltre
+    ``al``: una simulazione «fino a fine luglio» usa dunque anche le
+    estrazioni di agosto per contare le uscite.
+    """
+    serie = sorted(
+        (e for e in estrazioni if e.ruota == ruota),
+        key=lambda e: e.chiave_ordinamento,
+    )
+    return _verifica_serie(serie, colpi=colpi, dal=dal, al=al)
+
+
+def _verifica_serie(
+    serie: list[Estrazione],
+    *,
+    colpi: int,
+    dal: date | None = None,
+    al: date | None = None,
+) -> ReportVerifica:
+    """Cuore comune delle verifiche: filtra i trigger, guarda avanti K colpi."""
     esiti: list[EsitoTrigger] = []
     n_hit_ambata1 = 0
     n_hit_ambata2 = 0
     for posizione, estrazione in enumerate(serie):
+        if dal is not None and estrazione.data < dal:
+            continue
+        if al is not None and estrazione.data > al:
+            continue
         for trigger in trova_trigger(estrazione):
             finestra = serie[posizione + 1 : posizione + 1 + colpi]
-            colpo1 = _primo_colpo(finestra, trigger.ambata1)
-            colpo2 = _primo_colpo(finestra, trigger.ambata2)
+            colpo1 = primo_colpo(finestra, trigger.ambata1)
+            colpo2 = primo_colpo(finestra, trigger.ambata2)
             if colpo1 is not None:
                 n_hit_ambata1 += 1
             if colpo2 is not None:
@@ -165,7 +201,8 @@ def tasso_casuale(colpi: int) -> float:
     return 1.0 - ((NUMERO_MASSIMO - NUMERI_PER_ESTRAZIONE) / NUMERO_MASSIMO) ** colpi
 
 
-def _primo_colpo(finestra: Sequence[Estrazione], ambata: int) -> int | None:
+def primo_colpo(finestra: Sequence[Estrazione], ambata: int) -> int | None:
+    """Colpo (1-based) della prima uscita dell'ambata nella finestra, se presente."""
     for colpo, estrazione in enumerate(finestra, start=1):
         if ambata in estrazione.numeri:
             return colpo

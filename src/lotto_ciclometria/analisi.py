@@ -35,13 +35,15 @@ def filtra(
     *,
     ruota: Ruota | None = None,
     dal: date | None = None,
+    al: date | None = None,
 ) -> tuple[Estrazione, ...]:
-    """Ordina cronologicamente e applica i filtri richiesti."""
+    """Ordina cronologicamente e applica i filtri richiesti (estremi inclusi)."""
     selezione = [
         estrazione
         for estrazione in estrazioni
         if (ruota is None or estrazione.ruota == ruota)
         and (dal is None or estrazione.data >= dal)
+        and (al is None or estrazione.data <= al)
     ]
     return tuple(sorted(selezione, key=lambda e: e.chiave_ordinamento))
 

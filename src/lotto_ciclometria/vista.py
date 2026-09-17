@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import TYPE_CHECKING, Final
 
 from rich.console import Console
@@ -15,12 +16,14 @@ from lotto_ciclometria.cicli import (
     somma_caratteristica,
     triangoli_equilateri,
 )
+from lotto_ciclometria.memoria import StatoVoce
 from lotto_ciclometria.metodi import tasso_casuale
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from lotto_ciclometria.analisi import RitardoNumero
+    from lotto_ciclometria.memoria import VoceAllineata
     from lotto_ciclometria.metodi import EsitoTrigger, Previsione, ReportVerifica
     from lotto_ciclometria.models import Estrazione, Ruota
 
@@ -130,7 +133,12 @@ def stampa_figure(selezionate: Sequence[Estrazione]) -> None:
     console.print(tabella)
 
 
-def stampa_report(report: ReportVerifica, *, ruota: Ruota) -> None:
+def stampa_report(
+    report: ReportVerifica,
+    *,
+    ruota: Ruota,
+    titolo: str = "Verifica retroattiva",
+) -> None:
     """Sintesi della verifica retroattiva confrontata col caso."""
     totale = report.totale_trigger
     if totale == 0:
@@ -151,7 +159,7 @@ def stampa_report(report: ReportVerifica, *, ruota: Ruota) -> None:
         f"Trigger osservati: {totale} — finestra {report.colpi} colpi\n{riga1}{riga2}"
     )
     console.print(
-        Panel(contenuto, title=f"Verifica retroattiva — {ruota.value}", expand=False)
+        Panel(contenuto, title=f"{titolo} — {ruota.value}", expand=False)
     )
 
 
@@ -195,3 +203,52 @@ def stampa_previsione(previsione: Previsione | None) -> None:
     console.print(
         Panel(contenuto, title="Previsione attiva (distanza 30)", expand=False)
     )
+
+
+_COLORI_STATO: Final = {
+    StatoVoce.APERTA: "yellow",
+    StatoVoce.CHIUSA: "green",
+    StatoVoce.SCADUTA: "red",
+}
+
+
+def stampa_memoria(esiti: Sequence[VoceAllineata]) -> None:
+    """Previsioni registrate con stato di allineamento e colpi di uscita."""
+    tabella = _tabella(
+        "Memoria delle previsioni",
+        (
+            "Data rif.",
+            "Ruota",
+            "Ambate",
+            "Abbinamenti",
+            "Colpi",
+            "Colpo 1",
+            "Colpo 2",
+            "Stato",
+        ),
+    )
+    tabella.columns[3].justify = "left"
+    for esito in esiti:
+        voce = esito.voce
+        abbinamenti = "; ".join(f"{a}-{b}" for a, b in voce.abbinamenti)
+        colpo1 = str(voce.colpo_ambata1) if voce.colpo_ambata1 is not None else VUOTO
+        colpo2 = str(voce.colpo_ambata2) if voce.colpo_ambata2 is not None else VUOTO
+        tabella.add_row(
+            voce.data_riferimento.isoformat(),
+            voce.ruota.value,
+            f"{voce.ambate[0]} / {voce.ambate[1]}",
+            abbinamenti,
+            str(voce.colpi),
+            colpo1,
+            colpo2,
+            f"[{_COLORI_STATO[esito.stato]}]{esito.stato.value}[/{_COLORI_STATO[esito.stato]}]",
+        )
+    console.print(tabella)
+    conteggi = Counter(esito.stato for esito in esiti)
+    riepilogo = " · ".join(
+        "[{0}]{1}: {2}[/{0}]".format(
+            _COLORI_STATO[stato], stato.value, conteggi[stato]
+        )
+        for stato in StatoVoce
+    )
+    console.print(f"Riepilogo — {riepilogo}.")

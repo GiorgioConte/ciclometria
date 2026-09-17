@@ -1,0 +1,153 @@
+{
+  "name": "Lotto Ciclometria - Report giornaliero",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 30 21 * * *"
+            }
+          ]
+        }
+      },
+      "id": "1",
+      "name": "Dopo le estrazioni",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/daily-report",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Token",
+              "value": "={{$env.LOTTO_API_TOKEN}}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "2",
+      "name": "Analisi Python",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ 'Scrivi un report email in italiano usando esclusivamente questi dati JSON: ' + JSON.stringify($json) + '. Riassumi le ruote con trigger e previsioni attive, confronta i tassi con caso_atteso, indica il numero di estrazioni e chiudi con l\u2019avvertenza già presente nei dati. Non inventare numeri e non formulare promesse o previsioni certe. Restituisci solo HTML semplice, senza markdown.' }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "3",
+      "name": "Report OpenAI",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        760,
+        300
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "DA_CONFIGURARE",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "lotto@example.com",
+        "toEmail": "tu@example.com",
+        "subject": "Report Lotto Ciclometria - {{$now.format('dd/MM/yyyy')}}",
+        "emailType": "html",
+        "message": "={{$json.message?.content || $json.text || $json.output}}"
+      },
+      "id": "4",
+      "name": "Invia email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1020,
+        300
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "DA_CONFIGURARE",
+          "name": "SMTP account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Dopo le estrazioni": {
+      "main": [
+        [
+          {
+            "node": "Analisi Python",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analisi Python": {
+      "main": [
+        [
+          {
+            "node": "Report OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Invia email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "lotto-report-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

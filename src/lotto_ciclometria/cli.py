@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-from collections import Counter
+import os
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Final
-from zoneinfo import ZoneInfo
+from typing import Annotated
 
-import anyio
 import typer
 
-from lotto_ciclometria import vista
+from lotto_ciclometria import db, vista
 from lotto_ciclometria.analisi import (
     filtra,
     frequenze_distanze,
@@ -20,22 +18,34 @@ from lotto_ciclometria.analisi import (
     frequenze_somme,
     ritardi,
 )
-from lotto_ciclometria.downloader import EsitoAnno, sincronizza
-from lotto_ciclometria.errors import DownloadError, ParseError
-from lotto_ciclometria.metodi import previsione_attiva, verifica_retroattiva
+from lotto_ciclometria.comandi_archivio import registra_comandi, sincronizza_archivio
+from lotto_ciclometria.errors import ParseError
+from lotto_ciclometria.memoria import (
+    allinea as allinea_voci,
+)
+from lotto_ciclometria.memoria import (
+    carica_memoria,
+    salva_memoria,
+)
+from lotto_ciclometria.memoria import (
+    registra as registra_voce,
+)
+from lotto_ciclometria.metodi import (
+    previsione_attiva,
+    verifica_periodo,
+    verifica_retroattiva,
+)
 from lotto_ciclometria.models import Estrazione, Ruota
-from lotto_ciclometria.parser import parse_anno
-from lotto_ciclometria.store import carica, salva
+from lotto_ciclometria.store import carica
 
 app = typer.Typer(
     help="Toolkit di ciclometria sull'archivio storico del Lotto.",
     no_args_is_help=True,
     add_completion=False,
 )
+registra_comandi(app)
 
-PRIMO_ANNO_STORICO = 1871
 ESTRAZIONI_CERCHIO = 5
-_FUSO_RIFERIMENTO: Final = ZoneInfo("Europe/Rome")
 
 
 class Vista(StrEnum):
@@ -48,67 +58,19 @@ class Vista(StrEnum):
 
 
 def _archivio(dir_dati: Path) -> tuple[Estrazione, ...]:
-    """Carica l'archivio CSV interrompendo il comando se assente o invalido."""
+    """Carica PostgreSQL o, in assenza di URL, l'archivio CSV locale."""
     try:
+        if os.environ.get("DATABASE_URL"):
+            db.inizializza_schema()
+            estrazioni = db.carica_estrazioni()
+            if not estrazioni and (dir_dati / "archivio.csv").exists():
+                db.importa_csv(dir_dati / "archivio.csv")
+                estrazioni = db.carica_estrazioni()
+            return estrazioni
         return carica(dir_dati / "archivio.csv")
     except ParseError as errore:
         vista.console.print(f"[red]{errore}[/red]")
         raise typer.Exit(code=1) from errore
-
-
-@app.command()
-def download(
-    da: Annotated[
-        int | None,
-        typer.Option(
-            "--da", min=PRIMO_ANNO_STORICO, help="Primo anno da sincronizzare."
-        ),
-    ] = None,
-    a: Annotated[
-        int | None,
-        typer.Option(
-            "--a", min=PRIMO_ANNO_STORICO, help="Ultimo anno da sincronizzare."
-        ),
-    ] = None,
-    forza: Annotated[
-        bool,
-        typer.Option("--forza", help="Riscarica gli anni già presenti in cache."),
-    ] = False,
-    solo_build: Annotated[
-        bool,
-        typer.Option(
-            "--solo-build",
-            help="Ricostruisce il CSV dalla cache locale senza contattare la rete.",
-        ),
-    ] = False,
-    dir_dati: Annotated[
-        str,
-        typer.Option(
-            "--dir-dati", help="Directory dei dati (cache raw e archivio.csv)."
-        ),
-    ] = "data",
-) -> None:
-    """Sincronizza gli archivi annuali HTML e costruisce l'archivio CSV."""
-    percorso_dati = Path(dir_dati)
-    directory_raw = percorso_dati / "raw"
-    if not solo_build:
-        anni = _intervallo_anni(da, a)
-
-        async def _scarica_tutti() -> tuple[EsitoAnno, ...]:
-            return await sincronizza(directory_raw, anni=anni, forza=forza)
-
-        try:
-            esiti = anyio.run(_scarica_tutti)
-        except DownloadError as errore:
-            vista.console.print(f"[red]{errore}[/red]")
-            raise typer.Exit(code=1) from errore
-        conteggi = Counter(esito.stato for esito in esiti)
-        scaricati = conteggi.get("scaricato", 0)
-        invariati = conteggi.get("invariato", 0)
-        omessi = conteggi.get("omesso", 0)
-        dettaglio = f"{scaricati} scaricati, {invariati} invariati, {omessi} omessi"
-        vista.console.print(f"Sincronizzati {len(esiti)} anni: {dettaglio}.")
-    _ricostruisci_archivio(directory_raw, percorso_dati / "archivio.csv")
 
 
 @app.command()
@@ -232,6 +194,10 @@ def distanza30(
         int,
         typer.Option("--ultimi", min=1, help="Trigger recenti da elencare."),
     ] = 10,
+    registra: Annotated[
+        bool,
+        typer.Option("--registra", help="Salva la previsione attiva in memoria."),
+    ] = False,
     dir_dati: Annotated[
         str,
         typer.Option("--dir-dati", help="Directory dei dati."),
@@ -242,52 +208,144 @@ def distanza30(
     report = verifica_retroattiva(estrazioni, ruota=ruota, colpi=colpi)
     vista.stampa_report(report, ruota=ruota)
     vista.stampa_esiti(report.esiti, limite=ultimi)
-    vista.stampa_previsione(previsione_attiva(estrazioni, ruota=ruota))
-
-
-def _intervallo_anni(da: int | None, a: int | None) -> list[int] | None:
-    """Traduce le opzioni --da/--a nell'elenco degli anni (None = tutti)."""
-    if da is None and a is None:
-        return None
-    inizio = PRIMO_ANNO_STORICO if da is None else da
-    fine = datetime.now(tz=_FUSO_RIFERIMENTO).year if a is None else a
-    if inizio > fine:
-        vista.console.print(
-            "[red]L'anno iniziale (--da) supera l'anno finale (--a).[/red]"
-        )
-        raise typer.Exit(code=1)
-    return list(range(inizio, fine + 1))
-
-
-def _ricostruisci_archivio(directory_raw: Path, destinazione: Path) -> None:
-    """Rilegge tutta la cache raw e riscrive l'archivio CSV deduplicato."""
-    percorsi = sorted(
-        percorso for percorso in directory_raw.glob("*.HTM") if percorso.stem.isdigit()
-    )
-    if not percorsi:
-        vista.console.print(
-            "[yellow]Cache vuota: nessun file annuale da interpretare.[/yellow]"
-        )
-        raise typer.Exit(code=1)
-    estrazioni: list[Estrazione] = []
-    scarti_totali = 0
-    for percorso in percorsi:
-        anno = int(percorso.stem)
-        try:
-            risultato = parse_anno(
-                percorso.read_text(encoding="utf-8"), anno, percorso.name
+    previsione = previsione_attiva(estrazioni, ruota=ruota)
+    vista.stampa_previsione(previsione)
+    if registra:
+        if previsione is None:
+            vista.console.print(
+                "[yellow]Nessuna previsione attiva da registrare.[/yellow]"
             )
-        except ParseError as errore:
-            vista.console.print(f"[yellow]Anno ignorato — {errore}[/yellow]")
-            continue
-        estrazioni.extend(risultato.estrazioni)
-        scarti_totali += risultato.scarti
-    riepilogo = salva(estrazioni, destinazione)
-    prima = riepilogo.prima_data.isoformat() if riepilogo.prima_data else "?"
-    ultima = riepilogo.ultima_data.isoformat() if riepilogo.ultima_data else "?"
-    sintesi = f"{riepilogo.estrazioni} estrazioni ({prima} → {ultima})"
-    scartate = f"{scarti_totali} righe scartate"
-    vista.console.print(f"Archivio scritto in {destinazione}: {sintesi}, {scartate}.")
+            return
+        voce = registra_voce(previsione, colpi=colpi)
+        if os.environ.get("DATABASE_URL"):
+            db.inizializza_schema()
+            voci = db.carica_memoria()
+            if not voci and (Path(dir_dati) / "memoria.csv").exists():
+                db.importa_memoria_csv(Path(dir_dati) / "memoria.csv")
+                voci = db.carica_memoria()
+            db.salva_memoria([*voci, voce])
+        else:
+            percorso_memoria = Path(dir_dati) / "memoria.csv"
+            salva_memoria([*carica_memoria(percorso_memoria), voce], percorso_memoria)
+        data_rif = previsione.data_riferimento.isoformat()
+        nome_ruota = previsione.ruota.value
+        messaggio = "[green]Previsione registrata in memoria ({}, {}).[/green]"
+        vista.console.print(messaggio.format(data_rif, nome_ruota))
+
+
+@app.command(name="simula")
+def simula(  # noqa: PLR0913, PLR0917
+    ruota: Annotated[
+        Ruota,
+        typer.Argument(help="Ruota su cui simulare il metodo."),
+    ],
+    dal: Annotated[
+        datetime | None,
+        typer.Option(
+            "--dal",
+            help="Primo giorno dei trigger da simulare (AAAA-MM-GG).",
+        ),
+    ] = None,
+    al: Annotated[
+        datetime | None,
+        typer.Option(
+            "--al",
+            help="Ultimo giorno dei trigger da simulare (AAAA-MM-GG).",
+        ),
+    ] = None,
+    colpi: Annotated[
+        int,
+        typer.Option(
+            "--colpi", min=1, help="Ampiezza della finestra di verifica."
+        ),
+    ] = 9,
+    ultimi: Annotated[
+        int,
+        typer.Option("--ultimi", min=1, help="Trigger recenti da elencare."),
+    ] = 10,
+    dir_dati: Annotated[
+        str,
+        typer.Option("--dir-dati", help="Directory dei dati."),
+    ] = "data",
+) -> None:
+    """Simula il metodo su un periodo di trigger e verifica gli esiti."""
+    estrazioni = _archivio(Path(dir_dati))
+    dal_scelta = dal.date() if dal is not None else None
+    al_scelta = al.date() if al is not None else None
+    report = verifica_periodo(
+        estrazioni,
+        ruota=ruota,
+        colpi=colpi,
+        dal=dal_scelta,
+        al=al_scelta,
+    )
+    vista.stampa_report(report, ruota=ruota, titolo="Simulazione")
+    vista.stampa_esiti(report.esiti, limite=ultimi)
+
+
+@app.command(name="memoria")
+def elenco_memoria(
+    dir_dati: Annotated[
+        str,
+        typer.Option("--dir-dati", help="Directory dei dati."),
+    ] = "data",
+) -> None:
+    """Mostra le previsioni registrate con il loro stato di allineamento."""
+    percorso_dati = Path(dir_dati)
+    if os.environ.get("DATABASE_URL"):
+        voci = db.carica_memoria()
+        if not voci and (percorso_dati / "memoria.csv").exists():
+            db.importa_memoria_csv(percorso_dati / "memoria.csv")
+            voci = db.carica_memoria()
+    else:
+        voci = carica_memoria(percorso_dati / "memoria.csv")
+    esiti = allinea_voci(voci, _archivio(percorso_dati))
+    if not esiti:
+        vista.console.print(
+            "[yellow]Memoria vuota: usa distanza30 --registra.[/yellow]"
+        )
+        raise typer.Exit(code=1)
+    vista.stampa_memoria(esiti)
+
+
+@app.command(name="allinea")
+def allinea(
+    scarica: Annotated[
+        bool,
+        typer.Option(
+            "--scarica",
+            help="Aggiorna l'archivio prima di allineare.",
+        ),
+    ] = False,
+    dir_dati: Annotated[
+        str,
+        typer.Option("--dir-dati", help="Directory dei dati."),
+    ] = "data",
+) -> None:
+    """Allinea le previsioni memorizzate con le ultime estrazioni e le risalva."""
+    percorso_dati = Path(dir_dati)
+    if scarica:
+        sincronizza_archivio(percorso_dati)
+    percorso_memoria = percorso_dati / "memoria.csv"
+    if os.environ.get("DATABASE_URL"):
+        voci = db.carica_memoria()
+        if not voci and percorso_memoria.exists():
+            db.importa_memoria_csv(percorso_memoria)
+            voci = db.carica_memoria()
+    else:
+        voci = carica_memoria(percorso_memoria)
+    esiti = allinea_voci(voci, _archivio(percorso_dati))
+    if not esiti:
+        vista.console.print(
+            "[yellow]Memoria vuota: usa distanza30 --registra.[/yellow]"
+        )
+        raise typer.Exit(code=1)
+    if os.environ.get("DATABASE_URL"):
+        db.salva_memoria(esito.voce for esito in esiti)
+    else:
+        salva_memoria([esito.voce for esito in esiti], percorso_memoria)
+    vista.console.print("[green]Memoria riallineata.[/green]")
+    vista.stampa_memoria(esiti)
 
 
 def main() -> None:

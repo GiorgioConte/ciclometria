@@ -50,3 +50,21 @@ def test_filtra_per_ruota_e_data() -> None:
     ]
     solo_bari = filtra(estrazioni, ruota=Ruota.BARI)
     assert len(solo_bari) == 1
+
+
+def test_filtra_al_include_il_giorno_limite() -> None:
+    estrazioni = [
+        crea(29, (1, 2, 3, 4, 5)),
+        crea(30, (6, 7, 8, 9, 10)),
+        crea(31, (11, 12, 13, 14, 15)),
+    ]
+    selezionate = filtra(estrazioni, al=date(2026, 1, 31))
+    assert len(selezionate) == 3
+    entro_luglio = filtra(estrazioni, al=date(2026, 1, 30))
+    assert len(entro_luglio) == 2
+
+
+def test_filtra_dal_e_al_insieme() -> None:
+    estrazioni = [crea(giorno, (1, 2, 3, 4, 5)) for giorno in (1, 15, 31)]
+    selezionate = filtra(estrazioni, dal=date(2026, 1, 15), al=date(2026, 1, 31))
+    assert [e.data.day for e in selezionate] == [15, 31]
