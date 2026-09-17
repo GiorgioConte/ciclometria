@@ -48,8 +48,8 @@ restano sul computer ospite.
 
 Il `docker-compose.yml` avvia solo i servizi `lotto` e `api`: PostgreSQL deve
 essere già in esecuzione e raggiungibile sulla rete Docker indicata da
-`DOCKER_NETWORK`. Copiare `.env.example` in `.env`, impostare `DATABASE_URL` e
-`LOTTO_API_TOKEN`, quindi avviare:
+`POSTGRES_NETWORK`. Copiare `.env.example` in `.env`, impostare `DATABASE_URL`,
+`POSTGRES_NETWORK` e `LOTTO_API_TOKEN`, quindi avviare:
 
 ```bash
 docker network create ciclometria_default 2>/dev/null || true
@@ -57,8 +57,9 @@ docker compose up -d --build api
 docker compose run --rm lotto download
 ```
 
-Il container PostgreSQL esistente deve essere collegato a quella rete, ad
-esempio con `docker network connect ciclometria_default NOME_POSTGRES`.
+Il container PostgreSQL esistente deve essere già collegato a
+`POSTGRES_NETWORK`. Il servizio `lotto` viene collegato sia alla rete del
+progetto sia a quella PostgreSQL.
 L'endpoint `POST /daily-report` restituisce il JSON per n8n. Il workflow di
 esempio è in `n8n/workflow-report-giornaliero.json`.
 

@@ -8,6 +8,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?impostare DATABASE_URL}
     networks:
       - app
+      - database
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: ["--help"]
@@ -24,6 +25,7 @@ services:
       - "127.0.0.1:8000:8000"
     networks:
       - app
+      - database
     extra_hosts:
       - "host.docker.internal:host-gateway"
     entrypoint: ["uvicorn"]
@@ -33,3 +35,6 @@ networks:
   app:
     external: true
     name: ${DOCKER_NETWORK:-ciclometria_default}
+  database:
+    external: true
+    name: ${POSTGRES_NETWORK:-postgresql-5upn_default}
